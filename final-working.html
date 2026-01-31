@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Super Bowl Squares - Patriots vs Seahawks</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Merriweather:wght@700;900&display=swap');
+    h1, h2, .heading { font-family: 'Georgia', serif; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.7; } }
+    .animate-pulse { animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+const SuperBowlSquares = () => {
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlUserId = urlParams.get('id');
+  
+  const [gameState, setGameState] = useState(null);
+  const [currentView, setCurrentView] = useState('loading');
+  const [userId, setUserId] = useState(urlUserId || 'setup');
+  const [setupData, setSetupData] = useState({
+    participants: [
+      'Player 1', 'Player 2', 'Player 3', 'Player 4', 'Player 5',
+      'Player 6', 'Player 7', 'Player 8', 'Player 9', 'Player 10'
+    ],
+    team1: 'New England Patriots',
+    team2: 'Seattle Seahawks'
+  });
+  const [selectedName, setSelectedName] = useState(null);
+  const [currentScore, setCurrentScore] = useState({ team1: '', team2: '' });
+  const [loading, setLoading] = useState(true);
+  const [propBetPredictions, setPropBetPredictions] = useState({
+    coinToss: '',
+    firstToScore: '',
+    firstScoringType: '',
+    totalPoints: '',
+    longestTD: '',
+    firstTurnover: '',
+    halftimeSongs: '',
+    firstAd: '',
+    replayOverturn: '',
+    gatoradeColor: ''
+  });
+  const [showPropBets, setShowPropBets] = useState(false);
+
+  useEffect(() => {
+    const loadGameState = async () => {
+      try {
+        const result = await window.storage.get('superbowl-game', true);
+        if (result) {
+          const state = JSON.parse(result.value);
+          setGameState(state);
+          
+          if (!urlUserId) {
+            if (state.started || state.squares.some(s => s.owner !== null)) {
+              setCurrentView('game');
+              setUserId('admin');
+            } else {
+              setCurrentView('setup');
+            }
+          } else if (urlUserId === 'admin' && !state.started && state.squares.every(s => s.owner === null)) {
+            setCurrentView('links');
+          } else {
+            setCurrentView('game');
+          }
+        } else {
+          setCurrentView('setup');
+        }
+      } catch (error) {
+        console.log('No existing game found');
+        setCurrentView('setup');
+      }
+      setLoading(false);
+    };
+    loadGameState();
+  }, []);
+
+  const saveGameState = async (state) => {
+    await window.storage.set('superbowl-game', JSON.stringify(state), true);
+    setGameState(state);
+  };
+
+  const initializeGame = async () => {
+    const newGame = {
+      participants: setupData.participants.map((name, idx) => ({
+        id: `p${idx}`,
+        name: name
+      })),
+      team1: setupData.team1,
+      team2: setupData.team2,
+      squares: Array(100).fill(null).map((_, idx) => ({
+        id: idx,
+        owner: null,
+        row: Math.floor(idx / 10),
+        col: idx % 10
+      })),
+      rowNumbers: null,
+      colNumbers: null,
+      started: false,
+      scores: { q1: null, q2: null, q3: null, q4: null },
+      winners: { q1: null, q2: null, q3: null, q4: null },
+      propBets: {
+        predictions: {}, // { participantId: { coinToss: 'heads', firstToScore: 'patriots', ... } }
+        results: {
+          coinToss: null, // 'heads' or 'tails'
+          firstToScore: null, // 'patriots', 'seahawks', 'none'
+          firstScoringType: null, // 'touchdown', 'fieldgoal', 'safety'
+          totalPoints: null, // 'over' or 'under' (45.5)
+          longestTD: null, // 'over' or 'under' (40.5)
+          firstTurnover: null, // 'interception', 'fumble', 'none'
+          halftimeSongs: null, // 'over' or 'under' (5)
+          firstAd: null, // 'beer', 'car', 'insurance', 'tech'
+          replayOverturn: null, // 'yes' or 'no'
+          gatoradeColor: null // 'orange', 'red', 'yellow', 'green', 'blue', 'purple', 'clear'
+        }
+      }
+    };
+
+    await saveGameState(newGame);
+    setUserId('admin');
+    setCurrentView('links');
+  };
+
+  const generateLinks = () => {
+    const baseUrl = window.location.origin + window.location.pathname;
+    return [
+      {
+        name: 'Public Link (All Players)',
+        url: baseUrl
+      },
+      {
+        name: 'Admin Link',
+        url: `${baseUrl}?id=admin`
+      }
+    ];
+  };
+
+  const claimSquare = async (squareId) => {
+    if (!gameState || gameState.started) return;
+    if (!selectedName) {
+      alert('Please select your name first!');
+      return;
+    }
+    
+    const participant = gameState.participants.find(p => p.name === selectedName);
+    if (!participant) return;
+
+    const currentSquares = gameState.squares.filter(s => s.owner === participant.id).length;
+    if (currentSquares >= 10) {
+      alert('You have already claimed 10 squares!');
+      return;
+    }
+
+    const updatedSquares = gameState.squares.map(sq => 
+      sq.id === squareId && sq.owner === null ? { ...sq, owner: participant.id } : sq
+    );
+    await saveGameState({ ...gameState, squares: updatedSquares });
+  };
+
+  const submitPropBets = async () => {
+    if (!selectedName) {
+      alert('Please select your name first!');
+      return;
+    }
+
+    // Check if all predictions are filled
+    const allFilled = Object.values(propBetPredictions).every(val => val !== '');
+    if (!allFilled) {
+      alert('Please make a prediction for all prop bets!');
+      return;
+    }
+
+    const participant = gameState.participants.find(p => p.name === selectedName);
+    if (!participant) return;
+
+    const updatedPredictions = {
+      ...gameState.propBets.predictions,
+      [participant.id]: propBetPredictions
+    };
+
+    await saveGameState({
+      ...gameState,
+      propBets: {
+        ...gameState.propBets,
+        predictions: updatedPredictions
+      }
+    });
+
+    alert('Prop bet predictions submitted!');
+    setShowPropBets(false);
+  };
+
+  const updatePropBetResults = async (betType, result) => {
+    await saveGameState({
+      ...gameState,
+      propBets: {
+        ...gameState.propBets,
+        results: {
+          ...gameState.propBets.results,
+          [betType]: result
+        }
+      }
+    });
+  };
+
+  const getPropBetScores = () => {
+    if (!gameState?.propBets) return [];
+    
+    const scores = gameState.participants.map(participant => {
+      const predictions = gameState.propBets.predictions[participant.id];
+      if (!predictions) return { name: participant.name, score: 0, total: 0 };
+
+      let correct = 0;
+      let total = 0;
+
+      Object.keys(gameState.propBets.results).forEach(key => {
+        if (gameState.propBets.results[key] !== null) {
+          total++;
+          if (predictions[key] === gameState.propBets.results[key]) {
+            correct++;
+          }
+        }
+      });
+
+      return { name: participant.name, score: correct, total };
+    });
+
+    return scores.sort((a, b) => b.score - a.score);
+  };
+
+  const startGame = async () => {
+    if (!gameState || gameState.started) return;
+    const unclaimedSquares = gameState.squares.filter(s => s.owner === null).length;
+    if (unclaimedSquares > 0) {
+      if (!confirm(`There are ${unclaimedSquares} unclaimed squares. Start anyway?`)) return;
+    }
+    const shuffleArray = (array) => {
+      const arr = [...array];
+      for (let i = arr.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+      }
+      return arr;
+    };
+    const rowNumbers = shuffleArray([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const colNumbers = shuffleArray([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    await saveGameState({ ...gameState, rowNumbers, colNumbers, started: true });
+  };
+
+  const updateScore = async (quarter) => {
+    const t1Score = parseInt(currentScore.team1) || 0;
+    const t2Score = parseInt(currentScore.team2) || 0;
+    const newScores = { ...gameState.scores, [quarter]: { team1: t1Score, team2: t2Score } };
+    const team1LastDigit = t1Score % 10;
+    const team2LastDigit = t2Score % 10;
+    const winningSquare = gameState.squares.find(sq => {
+      const rowNum = gameState.rowNumbers[sq.row];
+      const colNum = gameState.colNumbers[sq.col];
+      return rowNum === team1LastDigit && colNum === team2LastDigit;
+    });
+    const newWinners = { ...gameState.winners, [quarter]: winningSquare ? winningSquare.id : null };
+    await saveGameState({ ...gameState, scores: newScores, winners: newWinners });
+    setCurrentScore({ team1: '', team2: '' });
+  };
+
+  const resetGame = async () => {
+    if (confirm('Reset and create a new game?')) {
+      await window.storage.delete('superbowl-game', true);
+      setGameState(null);
+      setCurrentView('setup');
+      setUserId('setup');
+      setSelectedName(null);
+      setPropBetPredictions({
+        coinToss: '',
+        firstToScore: '',
+        firstScoringType: '',
+        totalPoints: '',
+        longestTD: '',
+        firstTurnover: '',
+        halftimeSongs: '',
+        firstAd: '',
+        replayOverturn: '',
+        gatoradeColor: ''
+      });
+      setShowPropBets(false);
+      setSetupData({
+        participants: [
+          'Player 1', 'Player 2', 'Player 3', 'Player 4', 'Player 5',
+          'Player 6', 'Player 7', 'Player 8', 'Player 9', 'Player 10'
+        ],
+        team1: 'New England Patriots',
+        team2: 'Seattle Seahawks'
+      });
+      setCurrentScore({ team1: '', team2: '' });
+    }
+  };
+
+  const getCurrentLeader = () => {
+    if (!gameState || !gameState.started || !currentScore.team1 || !currentScore.team2) return null;
+    const t1Score = parseInt(currentScore.team1) || 0;
+    const t2Score = parseInt(currentScore.team2) || 0;
+    const team1LastDigit = t1Score % 10;
+    const team2LastDigit = t2Score % 10;
+    return gameState.squares.find(sq => {
+      const rowNum = gameState.rowNumbers[sq.row];
+      const colNum = gameState.colNumbers[sq.col];
+      return rowNum === team1LastDigit && colNum === team2LastDigit;
+    });
+  };
+
+  const getParticipantName = (id) => {
+    if (!gameState || !id) return '';
+    const participant = gameState.participants.find(p => p.id === id);
+    return participant ? participant.name : '';
+  };
+
+  const getInitials = (name) => {
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 3);
+  };
+
+  const isWinningSquare = (squareId) => {
+    if (!gameState) return null;
+    for (const [quarter, winningSquareId] of Object.entries(gameState.winners)) {
+      if (winningSquareId === squareId) return quarter;
+    }
+    return null;
+  };
+
+  const currentLeader = getCurrentLeader();
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 flex items-center justify-center">
+        <div className="text-white text-2xl font-bold" style={{ fontFamily: 'Georgia, serif' }}>Loading...</div>
+      </div>
+    );
+  }
+
+  if (currentView === 'setup') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 p-4 py-12">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 border-4 border-orange-600">
+            <h1 className="text-5xl font-black text-center mb-2 text-gray-900" style={{ fontFamily: 'Georgia, serif' }}>
+              SUPER BOWL
+            </h1>
+            <h2 className="text-3xl font-black text-center mb-8 text-orange-600" style={{ fontFamily: 'Georgia, serif' }}>
+              SQUARES
+            </h2>
+            <div className="space-y-6">
+              <div className="bg-orange-50 p-6 rounded-lg border-3 border-orange-300">
+                <label className="block text-lg font-bold text-gray-800 mb-3 uppercase tracking-wide text-center">
+                  Matchup
+                </label>
+                <p className="text-3xl font-black text-center text-gray-900" style={{ fontFamily: 'Georgia, serif' }}>
+                  {setupData.team1}
+                </p>
+                <p className="text-2xl font-bold text-center text-orange-600 my-2">VS</p>
+                <p className="text-3xl font-black text-center text-gray-900" style={{ fontFamily: 'Georgia, serif' }}>
+                  {setupData.team2}
+                </p>
+              </div>
+              <div className="bg-gray-50 p-4 rounded-lg border-2 border-gray-300">
+                <label className="block text-sm font-bold text-gray-700 mb-2 uppercase tracking-wide">
+                  Participants ({setupData.participants.length} Total)
+                </label>
+                <div className="grid grid-cols-2 gap-2 text-sm text-gray-600">
+                  {setupData.participants.map((name, idx) => (
+                    <div key={idx}>• {name}</div>
+                  ))}
+                </div>
+                <p className="text-xs text-gray-500 mt-3 italic">Names can be updated later</p>
+              </div>
+              <button onClick={initializeGame}
+                className="w-full bg-orange-600 hover:bg-orange-700 text-white font-black py-4 px-6 rounded-lg text-xl uppercase tracking-wide shadow-lg border-4 border-orange-700">
+                Create Game Board
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (currentView === 'links') {
+    const links = generateLinks();
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 p-4 py-12">
+        <div className="max-w-4xl mx-auto">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 border-4 border-orange-600">
+            <h1 className="text-4xl font-black text-gray-900 mb-6" style={{ fontFamily: 'Georgia, serif' }}>
+              Share These Links
+            </h1>
+            <p className="text-gray-700 mb-6 text-lg">
+              Send each participant their unique link. They can claim up to 10 squares.
+            </p>
+            <div className="space-y-3">
+              {links.map((link, idx) => (
+                <div key={idx} className="bg-gray-50 p-4 rounded-lg border-2 border-gray-300">
+                  <div className="font-bold text-gray-900 mb-2 text-lg">{link.name}</div>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={link.url}
+                      readOnly
+                      className="flex-1 px-3 py-2 bg-white border-2 border-gray-400 rounded text-sm"
+                    />
+                    <button
+                      onClick={() => {
+                        navigator.clipboard.writeText(link.url);
+                        alert('Link copied!');
+                      }}
+                      className="px-6 py-2 bg-green-700 text-white rounded hover:bg-green-800 font-bold uppercase"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setCurrentView('game')}
+                className="flex-1 bg-green-700 hover:bg-green-800 text-white font-bold py-4 px-6 rounded-lg transition text-lg uppercase shadow-lg">
+                View Game Board
+              </button>
+              <button
+                onClick={resetGame}
+                className="bg-red-700 hover:bg-red-800 text-white font-bold py-4 px-6 rounded-lg transition uppercase shadow-lg">
+                Reset
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (!gameState && currentView === 'game') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-2xl p-8 text-center border-4 border-orange-600">
+          <h1 className="text-3xl font-black text-gray-900 mb-4" style={{ fontFamily: 'Georgia, serif' }}>
+            No Game Found
+          </h1>
+          <p className="text-gray-700 mb-6 text-lg">Please ask the admin to set up a game first.</p>
+          <button
+            onClick={() => setCurrentView('setup')}
+            className="bg-orange-600 hover:bg-orange-700 text-white font-bold px-8 py-3 rounded-lg text-xl uppercase">
+            Go to Setup
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  const currentUser = isAdmin ? null : (selectedName ? gameState.participants.find(p => p.name === selectedName) : null);
+  const userSquareCount = currentUser ? gameState.squares.filter(s => s.owner === currentUser.id).length : 0;
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-green-900 via-green-800 to-green-900 p-2 md:p-6 py-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="bg-white rounded-2xl shadow-2xl p-6 mb-6 border-4 border-orange-600">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h1 className="text-4xl md:text-5xl font-black text-gray-900" style={{ fontFamily: 'Georgia, serif' }}>
+                SUPER BOWL SQUARES
+              </h1>
+              <p className="text-xl md:text-2xl text-orange-600 mt-2 font-bold" style={{ fontFamily: 'Georgia, serif' }}>
+                {gameState.team1} vs {gameState.team2}
+              </p>
+            </div>
+            
+            {!isAdmin && !gameState.started && (
+              <div className="bg-orange-100 px-6 py-3 rounded-lg border-2 border-orange-400">
+                <label className="block text-sm font-bold text-gray-800 mb-2">Select Your Name:</label>
+                <select
+                  value={selectedName || ''}
+                  onChange={(e) => setSelectedName(e.target.value)}
+                  className="px-4 py-2 border-2 border-gray-400 rounded-lg font-bold text-gray-900 w-full">
+                  <option value="">-- Choose Name --</option>
+                  {gameState.participants.map(p => (
+                    <option key={p.id} value={p.name}>{p.name}</option>
+                  ))}
+                </select>
+                {selectedName && (
+                  <>
+                    <p className="text-sm font-bold text-gray-700 mt-2">{userSquareCount}/10 squares claimed</p>
+                    <button
+                      onClick={() => setShowPropBets(true)}
+                      className="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg text-sm">
+                      {gameState.propBets?.predictions[gameState.participants.find(p => p.name === selectedName)?.id] ? '✓ Edit' : 'Submit'} Prop Bets
+                    </button>
+                  </>
+                )}
+              </div>
+            )}
+            
+            {!isAdmin && gameState.started && selectedName && (
+              <div className="bg-orange-100 px-6 py-3 rounded-lg border-2 border-orange-400">
+                <p className="text-sm font-bold text-gray-800 mb-1">Your Name:</p>
+                <p className="text-lg font-bold text-gray-900">{selectedName}</p>
+              </div>
+            )}
+            
+            {gameState.started && (
+              <div className="bg-green-700 px-6 py-3 rounded-lg">
+                <span className="font-bold text-white text-lg uppercase">Game Started</span>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Prop Bets Modal */}
+        {showPropBets && !isAdmin && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50" onClick={() => setShowPropBets(false)}>
+            <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto border-4 border-orange-600" onClick={(e) => e.stopPropagation()}>
+              <h2 className="text-3xl font-black text-gray-900 mb-6 heading">Prop Bets</h2>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Coin Toss:</label>
+                  <div className="flex gap-2">
+                    {['heads', 'tails'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, coinToss: opt})}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${propBetPredictions.coinToss === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">First Team to Score:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[{val: 'patriots', label: 'Patriots'}, {val: 'seahawks', label: 'Seahawks'}, {val: 'none', label: 'No Score Q1'}].map(opt => (
+                      <button key={opt.val} onClick={() => setPropBetPredictions({...propBetPredictions, firstToScore: opt.val})}
+                        className={`py-2 px-2 rounded-lg font-bold text-sm ${propBetPredictions.firstToScore === opt.val ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">First Scoring Type:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[{val: 'touchdown', label: 'TD'}, {val: 'fieldgoal', label: 'FG'}, {val: 'safety', label: 'Safety'}].map(opt => (
+                      <button key={opt.val} onClick={() => setPropBetPredictions({...propBetPredictions, firstScoringType: opt.val})}
+                        className={`py-2 px-2 rounded-lg font-bold ${propBetPredictions.firstScoringType === opt.val ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Total Points (O/U 45.5):</label>
+                  <div className="flex gap-2">
+                    {['over', 'under'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, totalPoints: opt})}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${propBetPredictions.totalPoints === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Longest TD (O/U 40.5 yds):</label>
+                  <div className="flex gap-2">
+                    {['over', 'under'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, longestTD: opt})}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${propBetPredictions.longestTD === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">First Turnover:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[{val: 'interception', label: 'INT'}, {val: 'fumble', label: 'Fumble'}, {val: 'none', label: 'None 1st Half'}].map(opt => (
+                      <button key={opt.val} onClick={() => setPropBetPredictions({...propBetPredictions, firstTurnover: opt.val})}
+                        className={`py-2 px-2 rounded-lg font-bold text-sm ${propBetPredictions.firstTurnover === opt.val ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Halftime Songs (O/U 5):</label>
+                  <div className="flex gap-2">
+                    {['over', 'under'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, halftimeSongs: opt})}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${propBetPredictions.halftimeSongs === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">First Ad After Kickoff:</label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {['beer', 'car', 'insurance', 'tech'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, firstAd: opt})}
+                        className={`py-2 px-4 rounded-lg font-bold capitalize ${propBetPredictions.firstAd === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Scoring Play Overturned?:</label>
+                  <div className="flex gap-2">
+                    {['yes', 'no'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, replayOverturn: opt})}
+                        className={`flex-1 py-2 px-4 rounded-lg font-bold uppercase ${propBetPredictions.replayOverturn === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-gray-800 mb-2">Gatorade Color:</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['orange', 'red', 'yellow', 'green', 'blue', 'purple', 'clear'].map(opt => (
+                      <button key={opt} onClick={() => setPropBetPredictions({...propBetPredictions, gatoradeColor: opt})}
+                        className={`py-2 px-2 rounded-lg font-bold capitalize text-sm ${propBetPredictions.gatoradeColor === opt ? 'bg-orange-600 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button onClick={() => setShowPropBets(false)} className="flex-1 bg-gray-500 hover:bg-gray-600 text-white font-bold py-3 px-6 rounded-lg">
+                  Cancel
+                </button>
+                <button onClick={submitPropBets} className="flex-1 bg-green-700 hover:bg-green-800 text-white font-bold py-3 px-6 rounded-lg">
+                  Submit Predictions
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Admin Controls */}
+        {isAdmin && (
+          <div className="bg-white rounded-2xl shadow-2xl p-6 mb-6 border-4 border-orange-600">
+            <h2 className="text-3xl font-black text-gray-900 mb-6" style={{ fontFamily: 'Georgia, serif' }}>
+              Admin Controls
+            </h2>
+            
+            {!gameState.started ? (
+              <div className="space-y-4">
+                <p className="text-gray-700 text-xl font-bold">
+                  {gameState.squares.filter(s => s.owner !== null).length}/100 Squares Claimed
+                </p>
+                <button
+                  onClick={() => setCurrentView('links')}
+                  className="w-full bg-blue-700 hover:bg-blue-800 text-white font-bold py-3 px-6 rounded-lg transition text-lg uppercase">
+                  View Participant Links
+                </button>
+                <button
+                  onClick={startGame}
+                  className="w-full bg-green-700 hover:bg-green-800 text-white font-bold py-4 px-6 rounded-lg transition text-xl uppercase shadow-lg">
+                  Start Game & Randomize
+                </button>
+                <button
+                  onClick={resetGame}
+                  className="w-full bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-lg transition uppercase">
+                  🔄 Reset Game
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xl font-bold text-gray-900 mb-3 uppercase">
+                    Current Score
+                  </label>
+                  <div className="grid grid-cols-2 gap-4 mb-4">
+                    <input
+                      type="number"
+                      placeholder={gameState.team1}
+                      value={currentScore.team1}
+                      onChange={(e) => setCurrentScore({ ...currentScore, team1: e.target.value })}
+                      className="px-4 py-3 border-3 border-gray-400 rounded-lg text-xl font-bold text-center"
+                    />
+                    <input
+                      type="number"
+                      placeholder={gameState.team2}
+                      value={currentScore.team2}
+                      onChange={(e) => setCurrentScore({ ...currentScore, team2: e.target.value })}
+                      className="px-4 py-3 border-3 border-gray-400 rounded-lg text-xl font-bold text-center"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                  {['q1', 'q2', 'q3', 'q4'].map(quarter => (
+                    <button
+                      key={quarter}
+                      onClick={() => updateScore(quarter)}
+                      disabled={gameState.scores[quarter] !== null}
+                      className={`py-3 px-4 rounded-lg font-bold transition text-lg uppercase ${
+                        gameState.scores[quarter] !== null
+                          ? 'bg-gray-400 text-gray-600 cursor-not-allowed'
+                          : 'bg-blue-700 hover:bg-blue-800 text-white shadow-lg'
+                      }`}>
+                      {quarter.toUpperCase()} {gameState.scores[quarter] ? '✓' : ''}
+                    </button>
+                  ))}
+                </div>
+
+                <button
+                  onClick={resetGame}
+                  className="w-full bg-red-700 hover:bg-red-800 text-white font-bold py-3 px-6 rounded-lg transition uppercase">
+                  🔄 Reset Game
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Prop Bets Admin */}
+        {isAdmin && gameState.started && (
+          <div className="bg-white rounded-2xl shadow-2xl p-6 mb-6 border-4 border-orange-600">
+            <h2 className="text-3xl font-black text-gray-900 mb-6 heading">Prop Bet Results</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">Coin Toss:</label>
+                <div className="flex gap-2">
+                  {['heads', 'tails'].map(opt => (
+                    <button key={opt} onClick={() => updatePropBetResults('coinToss', opt)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${gameState.propBets.results.coinToss === opt ? 'bg-green-700 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">First Team to Score:</label>
+                <select value={gameState.propBets.results.firstToScore || ''} onChange={(e) => updatePropBetResults('firstToScore', e.target.value)}
+                  className="w-full py-2 px-4 rounded-lg font-bold border-2 border-gray-400">
+                  <option value="">Select...</option>
+                  <option value="patriots">Patriots</option>
+                  <option value="seahawks">Seahawks</option>
+                  <option value="none">No Score Q1</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">First Scoring Type:</label>
+                <select value={gameState.propBets.results.firstScoringType || ''} onChange={(e) => updatePropBetResults('firstScoringType', e.target.value)}
+                  className="w-full py-2 px-4 rounded-lg font-bold border-2 border-gray-400">
+                  <option value="">Select...</option>
+                  <option value="touchdown">Touchdown</option>
+                  <option value="fieldgoal">Field Goal</option>
+                  <option value="safety">Safety</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">Total Points (O/U 45.5):</label>
+                <div className="flex gap-2">
+                  {['over', 'under'].map(opt => (
+                    <button key={opt} onClick={() => updatePropBetResults('totalPoints', opt)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${gameState.propBets.results.totalPoints === opt ? 'bg-green-700 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">Longest TD (O/U 40.5 yds):</label>
+                <div className="flex gap-2">
+                  {['over', 'under'].map(opt => (
+                    <button key={opt} onClick={() => updatePropBetResults('longestTD', opt)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${gameState.propBets.results.longestTD === opt ? 'bg-green-700 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">First Turnover:</label>
+                <select value={gameState.propBets.results.firstTurnover || ''} onChange={(e) => updatePropBetResults('firstTurnover', e.target.value)}
+                  className="w-full py-2 px-4 rounded-lg font-bold border-2 border-gray-400">
+                  <option value="">Select...</option>
+                  <option value="interception">Interception</option>
+                  <option value="fumble">Fumble</option>
+                  <option value="none">None 1st Half</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">Halftime Songs (O/U 5):</label>
+                <div className="flex gap-2">
+                  {['over', 'under'].map(opt => (
+                    <button key={opt} onClick={() => updatePropBetResults('halftimeSongs', opt)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-bold capitalize ${gameState.propBets.results.halftimeSongs === opt ? 'bg-green-700 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">First Ad:</label>
+                <select value={gameState.propBets.results.firstAd || ''} onChange={(e) => updatePropBetResults('firstAd', e.target.value)}
+                  className="w-full py-2 px-4 rounded-lg font-bold border-2 border-gray-400 capitalize">
+                  <option value="">Select...</option>
+                  <option value="beer">Beer</option>
+                  <option value="car">Car</option>
+                  <option value="insurance">Insurance</option>
+                  <option value="tech">Tech</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">Replay Overturn?:</label>
+                <div className="flex gap-2">
+                  {['yes', 'no'].map(opt => (
+                    <button key={opt} onClick={() => updatePropBetResults('replayOverturn', opt)}
+                      className={`flex-1 py-2 px-4 rounded-lg font-bold uppercase ${gameState.propBets.results.replayOverturn === opt ? 'bg-green-700 text-white' : 'bg-gray-200 text-gray-700'}`}>
+                      {opt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-gray-800 mb-2">Gatorade Color:</label>
+                <select value={gameState.propBets.results.gatoradeColor || ''} onChange={(e) => updatePropBetResults('gatoradeColor', e.target.value)}
+                  className="w-full py-2 px-4 rounded-lg font-bold border-2 border-gray-400 capitalize">
+                  <option value="">Select...</option>
+                  <option value="orange">Orange</option>
+                  <option value="red">Red</option>
+                  <option value="yellow">Yellow</option>
+                  <option value="green">Green</option>
+                  <option value="blue">Blue</option>
+                  <option value="purple">Purple</option>
+                  <option value="clear">Clear</option>
+                </select>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Prop Bets Leaderboard */}
+        {gameState.started && getPropBetScores().some(s => s.total > 0) && (
+          <div className="bg-white rounded-2xl shadow-2xl p-6 mb-6 border-4 border-orange-600">
+            <h2 className="text-3xl font-black text-gray-900 mb-6 flex items-center gap-3 heading">
+              🎯 Prop Bets Leaderboard
+            </h2>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b-2 border-gray-300">
+                    <th className="text-left py-3 px-4 font-bold text-gray-900">Rank</th>
+                    <th className="text-left py-3 px-4 font-bold text-gray-900">Player</th>
+                    <th className="text-center py-3 px-4 font-bold text-gray-900">Correct</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getPropBetScores().map((player, idx) => (
+                    <tr key={idx} className={`border-b border-gray-200 ${idx === 0 && player.score > 0 ? 'bg-yellow-100' : ''}`}>
+                      <td className="py-3 px-4 font-bold text-gray-700">{idx + 1}</td>
+                      <td className="py-3 px-4 font-bold text-gray-900">{player.name}</td>
+                      <td className="py-3 px-4 text-center font-bold text-blue-700">{player.score}/{player.total}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* Winners */}
+        {gameState.started && Object.values(gameState.winners).some(w => w !== null) && (
+          <div className="bg-white rounded-2xl shadow-2xl p-6 mb-6 border-4 border-orange-600">
+            <h2 className="text-3xl font-black text-gray-900 mb-6 flex items-center gap-3" style={{ fontFamily: 'Georgia, serif' }}>
+              🏆 Winners
+            </h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {['q1', 'q2', 'q3', 'q4'].map(quarter => {
+                const winningSquareId = gameState.winners[quarter];
+                const winningSquare = winningSquareId !== null ? gameState.squares.find(s => s.id === winningSquareId) : null;
+                const score = gameState.scores[quarter];
+                return (
+                  <div key={quarter} className="bg-orange-100 p-4 rounded-lg border-3 border-orange-400">
+                    <div className="font-bold text-gray-900 mb-2 text-lg uppercase">{quarter.toUpperCase()}</div>
+                    {winningSquare ? (
+                      <>
+                        <div className="text-base text-blue-700 font-bold">
+                          {getParticipantName(winningSquare.owner)}
+                        </div>
+                        {score && (
+                          <div className="text-sm text-gray-600 font-bold mt-1">
+                            {score.team1} - {score.team2}
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="text-base text-gray-500">Not yet</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Game Board */}
+        <div className="bg-white rounded-2xl shadow-2xl p-4 md:p-6 overflow-x-auto border-4 border-orange-600">
+          <div className="min-w-[600px]">
+            <div className="flex mb-2">
+              <div className="w-12 h-12"></div>
+              <div className="w-12 h-12"></div>
+              {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((col) => (
+                <div key={col} className="flex-1 h-12 flex items-center justify-center font-bold text-gray-900 text-xl">
+                  {gameState.started ? gameState.colNumbers[col] : '?'}
+                </div>
+              ))}
+            </div>
+
+            <div className="flex mb-2">
+              <div className="w-12 h-12"></div>
+              <div className="w-12 h-12"></div>
+              <div className="flex-1 text-center font-bold text-blue-700 text-xl" style={{ fontFamily: 'Georgia, serif' }}>
+                {gameState.team2}
+              </div>
+            </div>
+
+            {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((row) => (
+              <div key={row} className="flex">
+                {row === 0 && (
+                  <div className="w-12 font-bold text-blue-700 flex items-center justify-center text-xl absolute" 
+                    style={{writingMode: 'vertical-rl', transform: 'rotate(180deg)', height: '600px', fontFamily: 'Georgia, serif'}}>
+                    {gameState.team1}
+                  </div>
+                )}
+                
+                <div className="w-12 h-12 md:h-14 flex items-center justify-center font-bold text-gray-900 text-xl">
+                  {gameState.started ? gameState.rowNumbers[row] : '?'}
+                </div>
+
+                {[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((col) => {
+                  const squareIndex = row * 10 + col;
+                  const square = gameState.squares[squareIndex];
+                  const winningQuarter = isWinningSquare(squareIndex);
+                  const isCurrentLeader = currentLeader && currentLeader.id === square.id;
+                  const canClaim = !gameState.started && currentUser && square.owner === null && userSquareCount < 10;
+                  const isUserSquare = currentUser && square.owner === currentUser.id;
+
+                  return (
+                    <div
+                      key={col}
+                      onClick={() => canClaim && claimSquare(square.id)}
+                      className={`flex-1 h-12 md:h-14 border-2 border-gray-400 flex items-center justify-center text-sm md:text-base font-bold transition ${
+                        winningQuarter
+                          ? 'bg-orange-300 border-orange-600'
+                          : isCurrentLeader
+                          ? 'bg-green-300 border-green-600 animate-pulse'
+                          : isUserSquare
+                          ? 'bg-blue-200 border-blue-500'
+                          : square.owner
+                          ? 'bg-gray-200'
+                          : canClaim
+                          ? 'bg-white hover:bg-blue-100 cursor-pointer'
+                          : 'bg-white'
+                      }`}>
+                      {square.owner && getInitials(getParticipantName(square.owner))}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Legend */}
+        <div className="mt-6 bg-white rounded-xl shadow-lg p-4 border-2 border-gray-300">
+          <div className="flex flex-wrap gap-4 text-base font-bold">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 bg-blue-200 border-2 border-blue-500 rounded"></div>
+              <span>Your squares</span>
+            </div>
+            {gameState.started && (
+              <>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-green-300 border-2 border-green-600 rounded"></div>
+                  <span>Current leader</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 bg-orange-300 border-2 border-orange-600 rounded"></div>
+                  <span>Quarter winner</span>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+
+    // Update storage to use localStorage instead of window.storage
+    const originalStorage = window.storage;
+    if (!window.storage) {
+      window.storage = {
+        get: (key) => {
+          const item = localStorage.getItem(key);
+          return item ? { value: item } : null;
+        },
+        set: (key, value) => {
+          localStorage.setItem(key, value);
+          window.dispatchEvent(new StorageEvent('storage', { key, newValue: value }));
+          return { value };
+        },
+        delete: (key) => {
+          localStorage.removeItem(key);
+          window.dispatchEvent(new StorageEvent('storage', { key, newValue: null }));
+          return { deleted: true };
+        }
+      };
+    }
+
+    ReactDOM.render(<SuperBowlSquares />, document.getElementById('root'));
+  </script>
+</body>
+</html>
